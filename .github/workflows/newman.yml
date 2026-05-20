@@ -1,46 +1,57 @@
-name: Newman Contract Tests
+name: Contract and Newman Tests
 
 on:
   push:
-    branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
 
 jobs:
-  newman:
+  test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+
+      - name: Checkout source
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Install Prism
+        run: npm install -g @stoplight/prism-cli
+
+      - name: Install Newman Reporter
+        run: npm install -D newman-reporter-htmlextra
 
       - name: Lint OpenAPI contracts
-        run: npm run lint:contracts
+        run: npx @stoplight/spectral-cli lint contracts/*.yaml
 
-      - name: Start Prism mock servers
+      - name: Start Prism mock server
         run: |
-          nohup npm run mock:iot > prism-iot.log 2>&1 &
-          nohup npm run mock:vision > prism-vision.log 2>&1 &
+          nohup prism mock contracts/iot-ingestion.openapi.yaml -p 4010 > prism.log 2>&1 &
 
-      - name: Wait for mock servers
-        run: npx wait-on http://localhost:4010/health http://localhost:4011/health --timeout 30000
+      - name: Wait for Prism mock server
+        run: npx wait-on http://127.0.0.1:4010/health --timeout 30000
 
-      - name: Run Newman contract tests
-        run: npm run test:mock
-
-      - name: Show Prism logs on failure
-        if: failure()
+      - name: Start AI Vision mock server
         run: |
-          cat prism-iot.log || true
-          cat prism-vision.log || true
+          nohup prism mock contracts/ai-vision.openapi.yaml -p 4011 > prism-vision.log 2>&1 &
+
+      - name: Wait for AI Vision mock
+        run: npx wait-on http://127.0.0.1:4011/health --timeout 30000
+
+      - name: Run Newman tests
+        run: |
+          npx newman run postman/collections/FIT4110_lab03_iot_ingestion.postman_collection.json \
+          -e postman/environments/FIT4110_lab03_mock.postman_environment.json \
+          -r cli,junit,htmlextra \
+          --reporter-junit-export reports/newman-report.xml \
+          --reporter-htmlextra-export reports/newman-report.html
 
       - name: Upload Newman reports
         if: always()
