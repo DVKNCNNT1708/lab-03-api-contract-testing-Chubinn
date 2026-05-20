@@ -1,57 +1,58 @@
-name: Contract and Newman Tests
+name: Newman Contract Tests
 
 on:
   push:
+    branches: [ "main" ]
+
   pull_request:
+    branches: [ "main" ]
 
 jobs:
-  test:
+  newman:
     runs-on: ubuntu-latest
 
     steps:
 
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
-      - name: Install Prism
+      - name: Install Prism globally
         run: npm install -g @stoplight/prism-cli
 
-      - name: Install Newman Reporter
-        run: npm install -D newman-reporter-htmlextra
-
       - name: Lint OpenAPI contracts
-        run: npx @stoplight/spectral-cli lint contracts/*.yaml
+        run: npm run lint:contracts
 
-      - name: Start Prism mock server
+      - name: Start Prism IoT mock server
         run: |
-          nohup prism mock contracts/iot-ingestion.openapi.yaml -p 4010 > prism.log 2>&1 &
+          nohup npm run mock:iot > prism-iot.log 2>&1 &
 
-      - name: Wait for Prism mock server
-        run: npx wait-on http://127.0.0.1:4010/health --timeout 30000
-
-      - name: Start AI Vision mock server
+      - name: Start Prism Vision mock server
         run: |
-          nohup prism mock contracts/ai-vision.openapi.yaml -p 4011 > prism-vision.log 2>&1 &
+          nohup npm run mock:vision > prism-vision.log 2>&1 &
 
-      - name: Wait for AI Vision mock
-        run: npx wait-on http://127.0.0.1:4011/health --timeout 30000
-
-      - name: Run Newman tests
+      - name: Wait for mock servers
         run: |
-          npx newman run postman/collections/FIT4110_lab03_iot_ingestion.postman_collection.json \
-          -e postman/environments/FIT4110_lab03_mock.postman_environment.json \
-          -r cli,junit,htmlextra \
-          --reporter-junit-export reports/newman-report.xml \
-          --reporter-htmlextra-export reports/newman-report.html
+          npx wait-on tcp:4010 tcp:4011 --timeout 30000
+
+      - name: Run Newman contract tests
+        run: npm run test:mock
+
+      - name: Generate HTML report
+        run: npm run test:html
+
+      - name: Show Prism logs on failure
+        if: failure()
+        run: |
+          cat prism-iot.log || true
+          cat prism-vision.log || true
 
       - name: Upload Newman reports
         if: always()
